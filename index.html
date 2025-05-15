@@ -185,8 +185,11 @@
     }
 
     function remove_regions(lang_qid, status, map) {
-        map.removeLayer(lang_qid+"-"+status);
-        map.removeSource(lang_qid+"-"+status);
+        const id = lang_qid+"-"+status;
+        if (map.getLayer(id) != null)
+            map.removeLayer(id);
+        if (map.getSource(id) != null)
+            map.removeSource(id);
     }
     </script>
 </head>
