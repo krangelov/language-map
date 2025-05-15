@@ -1,0 +1,214 @@
+<head>
+    <link href="https://unpkg.com/maplibre-gl@^5.5.0/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+        .language:hover {background-color: powderblue;}
+    </style>
+
+    <script src="https://unpkg.com/maplibre-gl@^5.5.0/dist/maplibre-gl.js"></script>
+    <script>
+    const fill_colors = [
+        "#D6C7FF",
+        "#EBCA8A",
+        "#C1E599",
+        "#E7E58F",
+        "#98DDA1",
+        "#83D5F4",
+        "#B1BBF9",
+        "#EAB38F"
+    ];
+    const fill_opacities = [
+        0.7,
+        0.5
+    ];
+        
+    async function load_languages() {
+        const map = new maplibregl.Map({
+            container: 'map', // container id
+            style: 'countries.json', // style URL
+            center: [0, 0], // starting position [lng, lat]
+            zoom: 1 // starting zoom
+        });
+
+        const searchbox  = document.getElementById("searchbox");
+        const lang_table = document.getElementById("languages");
+        const sel_table = document.getElementById("selected-languages");
+
+        const query =
+           'SELECT ?lang ?langLabel ?region ?country ?osm_id ?status\n\
+            WHERE { {?lang wdt:P220 ?iso.\n\
+                     ?region wdt:P37 ?lang.\n\
+                     ?region wdt:P402 ?osm_id.\n\
+                     ?region wdt:P17 ?country.\n\
+                     BIND(0 as ?status).\n\
+                    }\n\
+                    UNION\n\
+                    {?lang wdt:P220 ?iso.\n\
+                     ?region wdt:P2936 ?lang.\n\
+                     ?region wdt:P402 ?osm_id.\n\
+                     ?region wdt:P17 ?country.\n\
+                     BIND(1 as ?status).\n\
+                    }\n\
+                    SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }\n\
+                  }';
+        const response = await fetch(
+                `https://query.wikidata.org/bigdata/namespace/wdq/sparql?query=${escape(query)}`,
+                {
+                    headers: {
+                        Accept: 'application/sparql-results+json',
+                        'User-Agent':
+                            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36',
+                    },
+                }
+            );
+        const json = await response.json();
+        const langs = {};
+        const items = [];
+        for (const row of json.results.bindings) {
+            // filter out other languages in Finland
+            if (row.country.value=="http://www.wikidata.org/entity/Q33" && row.status.value == 1)
+                continue;
+            // filter out other languages in Australia
+            if (row.country.value=="http://www.wikidata.org/entity/Q408" && row.status.value == 1)
+                continue;
+            if (langs[row.lang.value]) {
+                langs[row.lang.value].push([row.region.value,row.country.value,row.osm_id.value,row.status.value]);
+                continue;
+            }
+            langs[row.lang.value] = [[row.region.value,row.country.value,row.osm_id.value,row.status.value]];
+            items.push([row.lang.value,row.langLabel.value])
+        }
+        items.sort(function(item1, item2) {
+            return item1[1].localeCompare(item2[1]);
+        });
+        
+        for (const lang_qid in langs) {
+            const infos = langs[lang_qid];
+            let i = 0
+            while (i < infos.length) {
+                const info1 = infos[i];
+                let j = 0
+                while (j < infos.length) {
+                    const info2 = infos[j];
+                    if (i < j && info1[0] == info2[0]) {
+                        if (info1[3] < info2[3]) {
+                            infos.splice(j,1);
+                        } else {
+                            infos.splice(i,1); i--;
+                        }
+                        break;
+                    } else if (i != j && info1[1] == info2[0]) {
+                        if (info2[3] == 0) {
+                            infos.splice(i,1); i--;
+                        } else {
+                            infos.splice(j,1);
+                            if (j < i) i--;
+                        }
+                        break;
+                    }
+                    j++;
+                }
+                i++;
+            }
+        }
+
+        function select_languages() {
+            const query = searchbox.value.toLowerCase();
+            lang_table.innerHTML = "";
+            if (query == "")
+                return;
+            for (const item of items) {
+                if (item[1].toLowerCase().includes(query)) {
+                    const tr = document.createElement("tr");
+                    tr.className = "language";
+                    const td = document.createElement("td");
+                    td.innerText = item[1];
+                    tr.appendChild(td);
+                    tr.addEventListener("click", function (e) {
+                        const parent = this.parentElement;
+                        parent.removeChild(this);
+                        if (parent == lang_table) {
+                            const index = sel_table.childElementCount;
+                            this.style.backgroundColor = fill_colors[index % fill_colors.length];
+                            sel_table.appendChild(this);
+                            searchbox.value = "";
+                            lang_table.innerHTML = "";
+                            load_regions(item[0], langs, index, 0, map);
+                            load_regions(item[0], langs, index, 1, map);
+                        } else {
+                            remove_regions(item[0], 0, map);
+                            remove_regions(item[0], 1, map);
+                        }
+                    });
+                    lang_table.appendChild(tr);
+                }
+            }
+        }
+
+        select_languages();
+
+        searchbox.addEventListener("keyup", select_languages);
+        searchbox.focus();
+    }
+
+    async function load_regions(lang_qid, langs, index, status, map) {
+        let i = 0
+        ids = ""
+        for (const info of langs[lang_qid]) {
+            if (info[3] != status)
+                continue;
+            if (i >= 50)
+                break
+            if (ids == "")
+                ids = "R"+info[2];
+            else
+                ids += ",R"+info[2]
+            i++;
+        }
+
+        if (ids) {
+            map.addSource(lang_qid+"-"+status, {
+                'type': 'geojson',
+                'data': `https://nominatim.openstreetmap.org/lookup?osm_ids=${ids}&format=geojson&polygon_geojson=1&polygon_threshold=0.3`
+            });
+            map.addLayer({
+                'id': lang_qid+"-"+status,
+                'type': 'fill',
+                'source': lang_qid+"-"+status,
+                'layout': {},
+                'paint': {
+                    'fill-color': fill_colors[index % fill_colors.length],
+                    'fill-opacity': fill_opacities[status % fill_opacities.length]
+                }});
+        } else {
+            console.log("No geographical information found");
+        }
+    }
+
+    function remove_regions(lang_qid, status, map) {
+        map.removeLayer(lang_qid+"-"+status);
+        map.removeSource(lang_qid+"-"+status);
+    }
+    </script>
+</head>
+<body onload="load_languages()" style="background: #eee; overflow: hidden">
+    <table style="width: 80%">
+        <tr>
+            <td style="width: 15em">
+                <div style="display: flex; flex-direction: column; height: 100vh">
+                    <table><tr>
+                        <td>&#128269;</td><td><input id="searchbox" style="width: 100%" placeholder="Find a language"/></td>
+                    </tr></table>
+                    <div style="border: 1px solid silver; margin-top: 5px; background: white">
+                        <table id="selected-languages" style="width: 100%"></table>
+                    </div>
+                    <div style="border: 1px solid silver; margin-top: 5px; background: white; flex: 1; overflow: auto; ">
+                        <table id="languages" style="width: 100%"><tr><td>Loading from Wikidata...</td></tr></table>
+                    </div>
+                </div>
+            </td>
+            <td style="vertical-align: top">
+                <div id="map" style="height: 100vh"></div>
+            </td>
+        </tr>
+    </table>
+</body>
