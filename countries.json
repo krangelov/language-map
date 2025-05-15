@@ -223,14 +223,6 @@
             "maxzoom": 24,
             "minzoom": 2,
             "source-layer": "centroids"
-        },
-        {
-            "id": "crimea-fill",
-            "type": "fill",
-            "source": "crimea",
-            "paint": {
-                "fill-color": "#D6C7FF"
-            }
         }
     ],
     "bearing": 0,
